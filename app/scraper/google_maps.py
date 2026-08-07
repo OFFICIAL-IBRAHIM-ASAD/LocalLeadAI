@@ -1,40 +1,53 @@
+from urllib.parse import quote
+
 from playwright.sync_api import sync_playwright
+
+from app.config.settings import (
+    GOOGLE_MAPS_URL,
+    HEADLESS,
+    PAGE_TIMEOUT,
+    SLOW_MO,
+    WAIT_AFTER_SEARCH,
+)
+from app.utils.logger import info, success
 
 
 class GoogleMapsScraper:
 
     def __init__(self):
+
         self.playwright = sync_playwright().start()
 
         self.browser = self.playwright.chromium.launch(
-            headless=False,
-            slow_mo=300
+            headless=HEADLESS,
+            slow_mo=SLOW_MO
         )
 
         self.page = self.browser.new_page()
 
-    def search(self, query):
+        self.page.set_default_timeout(PAGE_TIMEOUT)
 
-        print(f"Searching for: {query}")
+    def search(self, query: str):
+
+        encoded = quote(query)
+
+        url = f"{GOOGLE_MAPS_URL}/search/{encoded}"
+
+        info(f"Opening: {url}")
 
         self.page.goto(
-                       "https://www.google.com/maps",
-                        wait_until="domcontentloaded",
-                        timeout=60000
-)
+            url,
+            wait_until="domcontentloaded"
+        )
 
-        self.page.locator('input[id="searchboxinput"]').wait_for(timeout=30000)
+        self.page.wait_for_timeout(WAIT_AFTER_SEARCH)
 
-        search_box = self.page.locator('input[id="searchboxinput"]')
-
-        search_box.fill(query)
-
-        self.page.keyboard.press("Enter")
-
-        self.page.wait_for_timeout(7000)
+        success("Search completed.")
 
     def close(self):
+
         self.browser.close()
+
         self.playwright.stop()
 
 

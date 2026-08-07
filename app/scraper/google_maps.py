@@ -8,7 +8,10 @@ from app.config.settings import (
     PAGE_TIMEOUT,
     SLOW_MO,
     WAIT_AFTER_SEARCH,
+    WAIT_AFTER_SCROLL,
+    MAX_SCROLLS,
 )
+
 from app.utils.logger import info, success
 
 
@@ -44,6 +47,38 @@ class GoogleMapsScraper:
 
         success("Search completed.")
 
+    def scroll_results(self):
+
+        info("Locating results panel...")
+
+        results_panel = self.page.locator('div[role="feed"]')
+
+        results_panel.wait_for(timeout=30000)
+
+        previous_count = 0
+
+        for i in range(MAX_SCROLLS):
+
+            results_panel.evaluate(
+                "(element) => element.scrollBy(0, element.scrollHeight)"
+            )
+
+            self.page.wait_for_timeout(WAIT_AFTER_SCROLL)
+
+            businesses = self.page.locator('a[href*="/place/"]')
+
+            current_count = businesses.count()
+
+            info(f"Scroll {i + 1}: {current_count} businesses loaded")
+
+            if current_count == previous_count:
+                success("No new businesses found. Stopping scroll.")
+                break
+
+            previous_count = current_count
+
+        success("Scrolling finished.")
+
     def close(self):
 
         self.browser.close()
@@ -56,6 +91,8 @@ if __name__ == "__main__":
     scraper = GoogleMapsScraper()
 
     scraper.search("Restaurants in Karachi")
+
+    scraper.scroll_results()
 
     input("Press ENTER to close...")
 

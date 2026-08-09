@@ -5,6 +5,7 @@ from app.database.manager import DatabaseManager
 from app.scraper.extractor import GoogleMapsExtractor
 from app.scraper.google_maps import GoogleMapsScraper
 from app.utils.logger import info, success
+from app.validation.validator import find_near_duplicate, is_valid_business
 
 
 def run(query: str) -> None:
@@ -16,7 +17,9 @@ def run(query: str) -> None:
                 ↓
         Extract business data
                 ↓
-        Save to SQLite (skipping duplicates by maps_url)
+        Validate + check near-duplicates
+                ↓
+        Save to SQLite
     """
 
     create_tables()
@@ -34,10 +37,37 @@ def run(query: str) -> None:
         extractor = GoogleMapsExtractor(scraper.page)
         businesses = extractor.extract_result_cards()
 
+        # Pull existing (name, address) pairs once, then keep it
+        # updated as we go, so duplicates within this same run
+        # are also caught.
+        existing_rows = db.get_all_businesses()
+        # columns: id, name, category, phone, website, rating,
+        #          reviews, address, maps_url, ...
+        known = [(row[1], row[7]) for row in existing_rows]
+
         saved = 0
-        skipped = 0
+        skipped_invalid = 0
+        skipped_duplicate = 0
+        skipped_existing = 0
 
         for business in businesses:
+            valid, reason = is_valid_business(business)
+            if not valid:
+                skipped_invalid += 1
+                info(f"Skipped (invalid: {reason}): {business.name!r}")
+                continue
+
+            duplicate_of = find_near_duplicate(
+                business.name, business.address, known
+            )
+            if duplicate_of:
+                skipped_duplicate += 1
+                info(
+                    f"Skipped (near-duplicate of {duplicate_of!r}): "
+                    f"{business.name!r}"
+                )
+                continue
+
             inserted = db.add_business(
                 name=business.name,
                 category=business.category,
@@ -51,12 +81,15 @@ def run(query: str) -> None:
 
             if inserted:
                 saved += 1
+                known.append((business.name, business.address))
             else:
-                skipped += 1
+                skipped_existing += 1
 
         success(
-            f"Saved {saved} new businesses "
-            f"({skipped} already in database)."
+            f"Saved {saved} new businesses. "
+            f"Skipped: {skipped_invalid} invalid, "
+            f"{skipped_duplicate} near-duplicates, "
+            f"{skipped_existing} already in database."
         )
 
     finally:

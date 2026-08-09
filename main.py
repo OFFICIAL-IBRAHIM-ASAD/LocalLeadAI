@@ -9,22 +9,7 @@ from app.utils.logger import info, success
 from app.validation.validator import find_near_duplicate, is_valid_business
 
 
-def run(query: str, limit_details: int = None) -> None:
-    """Runs the full LocalLeadAI pipeline for a single search query:
-
-        Google Maps search
-                ↓
-        Scroll through results
-                ↓
-        Extract business data (name, category, address, rating)
-                ↓
-        Visit each business's own page for phone/website
-                ↓
-        Validate + check near-duplicates
-                ↓
-        Save to SQLite
-    """
-
+def run(query: str, limit_details: int = None, min_rating: float = None) -> None:
     create_tables()
 
     scraper = GoogleMapsScraper()
@@ -40,7 +25,18 @@ def run(query: str, limit_details: int = None) -> None:
         extractor = GoogleMapsExtractor(scraper.page)
         businesses = extractor.extract_result_cards()
 
-        # --- Phone / website: one page visit per business ---
+        if min_rating is not None:
+            before_count = len(businesses)
+            businesses = [
+                b for b in businesses
+                if b.rating is not None and b.rating >= min_rating
+            ]
+            info(
+                f"--min-rating {min_rating} applied: "
+                f"{before_count} -> {len(businesses)} businesses "
+                f"(excluded businesses with no rating or below threshold)."
+            )
+
         to_visit = businesses
         if limit_details is not None:
             to_visit = businesses[:limit_details]
@@ -68,20 +64,27 @@ def run(query: str, limit_details: int = None) -> None:
 
         # --- Validate + save ---
         existing_rows = db.get_all_businesses()
-        # columns: id, name, category, phone, website, rating,
-        #          reviews, address, maps_url, ...
         known = [(row[1], row[7]) for row in existing_rows]
 
         saved = 0
+        updated = 0
         skipped_invalid = 0
         skipped_duplicate = 0
-        skipped_existing = 0
 
         for business in businesses:
             valid, reason = is_valid_business(business)
             if not valid:
                 skipped_invalid += 1
                 info(f"Skipped (invalid: {reason}): {business.name!r}")
+                continue
+
+            existing = db.get_by_maps_url(business.maps_url)
+            if existing:
+                existing_id, _, _ = existing
+                db.update_contact_info(
+                    existing_id, business.phone, business.website
+                )
+                updated += 1
                 continue
 
             duplicate_of = find_near_duplicate(
@@ -109,14 +112,12 @@ def run(query: str, limit_details: int = None) -> None:
             if inserted:
                 saved += 1
                 known.append((business.name, business.address))
-            else:
-                skipped_existing += 1
 
         success(
             f"Saved {saved} new businesses. "
+            f"Updated {updated} existing (backfilled phone/website). "
             f"Skipped: {skipped_invalid} invalid, "
-            f"{skipped_duplicate} near-duplicates, "
-            f"{skipped_existing} already in database."
+            f"{skipped_duplicate} near-duplicates."
         )
 
     finally:
@@ -149,9 +150,19 @@ def main():
             "(for quick testing). Default: all businesses."
         ),
     )
+    parser.add_argument(
+        "--min-rating",
+        type=float,
+        default=None,
+        help=(
+            "Only save businesses with this rating or higher "
+            "(e.g. 4.0). Businesses with no rating are excluded "
+            "when this is set. Default: no filter."
+        ),
+    )
 
     args = parser.parse_args()
-    run(args.query, limit_details=args.limit_details)
+    run(args.query, limit_details=args.limit_details, min_rating=args.min_rating)
 
 
 if __name__ == "__main__":

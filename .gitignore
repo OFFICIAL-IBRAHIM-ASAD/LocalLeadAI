@@ -1,29 +1,5 @@
-# Virtual Environment
-.venv/
-
-# Python
+data/
+output/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Environment Variables
-.env
-
-# VS Code
-.vscode/
-
-# Database
-data/*.db
-
-# Logs
-logs/
-
-# Screenshots
-screenshots/
-
-# macOS
-.DS_Store
-
-# Linux
-*.swp
+.venv/

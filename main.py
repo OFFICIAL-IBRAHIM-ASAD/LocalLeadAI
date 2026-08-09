@@ -2,20 +2,23 @@ import argparse
 
 from app.database.db import create_tables
 from app.database.manager import DatabaseManager
+from app.scraper.detail_extractor import visit_and_extract_details
 from app.scraper.extractor import GoogleMapsExtractor
 from app.scraper.google_maps import GoogleMapsScraper
 from app.utils.logger import info, success
 from app.validation.validator import find_near_duplicate, is_valid_business
 
 
-def run(query: str) -> None:
+def run(query: str, limit_details: int = None) -> None:
     """Runs the full LocalLeadAI pipeline for a single search query:
 
         Google Maps search
                 ↓
         Scroll through results
                 ↓
-        Extract business data
+        Extract business data (name, category, address, rating)
+                ↓
+        Visit each business's own page for phone/website
                 ↓
         Validate + check near-duplicates
                 ↓
@@ -37,9 +40,33 @@ def run(query: str) -> None:
         extractor = GoogleMapsExtractor(scraper.page)
         businesses = extractor.extract_result_cards()
 
-        # Pull existing (name, address) pairs once, then keep it
-        # updated as we go, so duplicates within this same run
-        # are also caught.
+        # --- Phone / website: one page visit per business ---
+        to_visit = businesses
+        if limit_details is not None:
+            to_visit = businesses[:limit_details]
+            info(
+                f"--limit set: only fetching phone/website for "
+                f"first {limit_details} of {len(businesses)} businesses."
+            )
+
+        info(f"Visiting {len(to_visit)} business pages for phone/website...")
+
+        for i, business in enumerate(to_visit, start=1):
+            if not business.maps_url:
+                continue
+
+            phone, website = visit_and_extract_details(
+                scraper.page, business.maps_url
+            )
+            business.phone = phone
+            business.website = website
+
+            info(
+                f"[{i}/{len(to_visit)}] {business.name}: "
+                f"phone={phone!r}, website={website!r}"
+            )
+
+        # --- Validate + save ---
         existing_rows = db.get_all_businesses()
         # columns: id, name, category, phone, website, rating,
         #          reviews, address, maps_url, ...
@@ -113,9 +140,18 @@ def main():
             "'Restaurants in Karachi'. Defaults to that if omitted."
         ),
     )
+    parser.add_argument(
+        "--limit-details",
+        type=int,
+        default=None,
+        help=(
+            "Only fetch phone/website for the first N businesses "
+            "(for quick testing). Default: all businesses."
+        ),
+    )
 
     args = parser.parse_args()
-    run(args.query)
+    run(args.query, limit_details=args.limit_details)
 
 
 if __name__ == "__main__":

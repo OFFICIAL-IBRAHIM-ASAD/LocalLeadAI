@@ -58,6 +58,11 @@ def _similar(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+def _first_word(text: str) -> str:
+    words = text.split()
+    return words[0] if words else ""
+
+
 def find_near_duplicate(
     name: str,
     address: Optional[str],
@@ -85,6 +90,8 @@ def find_near_duplicate(
         name_match = (
             _similar(normalized_name, existing_normalized_name)
             >= DUPLICATE_THRESHOLD
+            and _first_word(normalized_name)
+            == _first_word(existing_normalized_name)
         )
 
         if not name_match:

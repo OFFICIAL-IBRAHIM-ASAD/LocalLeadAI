@@ -19,6 +19,11 @@ class DatabaseManager:
     ):
         """
         Adds a business if it doesn't already exist.
+
+        Returns:
+            bool: True if a new row was inserted, False if it was
+            skipped because a business with this maps_url already
+            exists.
         """
 
         self.cursor.execute("""
@@ -46,6 +51,8 @@ class DatabaseManager:
         ))
 
         self.conn.commit()
+
+        return self.cursor.rowcount > 0
 
     def get_all_businesses(self):
         self.cursor.execute("SELECT * FROM businesses")

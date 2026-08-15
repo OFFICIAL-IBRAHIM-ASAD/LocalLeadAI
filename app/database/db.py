@@ -23,7 +23,8 @@ def get_connection():
 
 def create_tables():
     """
-    Creates the businesses table if it doesn't exist.
+    Creates the businesses table if it doesn't exist, and adds
+    any new columns that older databases might be missing.
     """
 
     conn = get_connection()
@@ -60,6 +61,16 @@ def create_tables():
 
         )
     """)
+
+    # Migration: add whatsapp_failed column if it doesn't exist yet
+    # (older databases created before this feature won't have it).
+    cursor.execute("PRAGMA table_info(businesses)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    if "whatsapp_failed" not in existing_columns:
+        cursor.execute(
+            "ALTER TABLE businesses ADD COLUMN whatsapp_failed INTEGER DEFAULT 0"
+        )
 
     conn.commit()
     conn.close()

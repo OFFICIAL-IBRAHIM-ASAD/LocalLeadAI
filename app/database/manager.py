@@ -20,10 +20,6 @@ class DatabaseManager:
         """
         Inserts a new business. Assumes the caller has already
         checked it doesn't exist (see get_by_maps_url).
-
-        Returns:
-            bool: True if inserted, False if maps_url already
-            existed (safety net - shouldn't normally happen).
         """
 
         self.cursor.execute("""
@@ -55,8 +51,6 @@ class DatabaseManager:
         return self.cursor.rowcount > 0
 
     def get_by_maps_url(self, maps_url):
-        """Returns (id, phone, website) if a business with this
-        maps_url already exists, else None."""
         self.cursor.execute(
             "SELECT id, phone, website FROM businesses WHERE maps_url = ?",
             (maps_url,),
@@ -64,8 +58,6 @@ class DatabaseManager:
         return self.cursor.fetchone()
 
     def update_contact_info(self, business_id, phone, website):
-        """Fills in phone/website on an existing row, without
-        overwriting data it already has."""
         self.cursor.execute("""
             UPDATE businesses
             SET
@@ -89,13 +81,25 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def get_uncontacted_leads(self):
-        """Businesses with a phone, no website, not yet contacted."""
+        """Businesses with a phone, no website, not yet contacted,
+        and not previously marked as a failed WhatsApp send."""
         self.cursor.execute("""
             SELECT *
             FROM businesses
             WHERE (website IS NULL OR website = '')
               AND phone IS NOT NULL AND phone != ''
               AND contacted = 0
+              AND whatsapp_failed = 0
+        """)
+        return self.cursor.fetchall()
+
+    def get_whatsapp_failed_leads(self):
+        """Businesses whose WhatsApp send failed - candidates for
+        cold calling instead."""
+        self.cursor.execute("""
+            SELECT *
+            FROM businesses
+            WHERE whatsapp_failed = 1
         """)
         return self.cursor.fetchall()
 
@@ -103,6 +107,17 @@ class DatabaseManager:
         self.cursor.execute("""
             UPDATE businesses
             SET contacted = 1
+            WHERE id = ?
+        """, (business_id,))
+        self.conn.commit()
+
+    def mark_whatsapp_failed(self, business_id):
+        """Marks a business as failed-to-send, so it won't be
+        retried in future campaigns. It'll instead show up in the
+        cold-call export."""
+        self.cursor.execute("""
+            UPDATE businesses
+            SET whatsapp_failed = 1
             WHERE id = ?
         """, (business_id,))
         self.conn.commit()

@@ -9,42 +9,22 @@ from app.utils.logger import info, success
 from app.whatsapp.browser import WhatsAppBrowser
 from app.whatsapp.sender import send_message
 
-# --- Category-specific value proposition lines ---
-
 RESTAURANT_KEYWORDS = ["restaurant", "cafe", "food", "bakery", "catering", "diner"]
 MEDICAL_KEYWORDS = ["dental", "dentist", "clinic", "hospital", "doctor", "medical", "surgeon"]
 
 VALUE_LINES = {
-    "restaurant": {
-        "en": (
-            "It also makes it easier for customers to view your menu, "
-            "place online orders, and find your location and contact details."
-        ),
-        "ur": (
-            "اس کے ذریعے کسٹمرز آسانی سے آپ کا مینیو دیکھ سکتے ہیں، آن لائن آرڈر کر "
-            "سکتے ہیں، اور آپ کی لوکیشن اور رابطہ نمبر تلاش کر سکتے ہیں۔"
-        ),
-    },
-    "medical": {
-        "en": (
-            "It also makes it easier for patients to book appointments, view "
-            "your services, and find your location and contact details."
-        ),
-        "ur": (
-            "اس کے ذریعے مریض آسانی سے اپائنٹمنٹ بک کر سکتے ہیں، آپ کی خدمات دیکھ "
-            "سکتے ہیں، اور آپ کی لوکیشن اور رابطہ نمبر تلاش کر سکتے ہیں۔"
-        ),
-    },
-    "generic": {
-        "en": (
-            "It also makes it easier for customers to view your services, "
-            "location, contact details, and place inquiries."
-        ),
-        "ur": (
-            "اس کے ذریعے لوگ آسانی سے آپ کی خدمات، لوکیشن، رابطہ نمبر دیکھ سکتے ہیں "
-            "اور سوالات بھیج سکتے ہیں۔"
-        ),
-    },
+    "restaurant": (
+        "It also makes it easier for customers to view your menu, "
+        "place online orders, and find your location and contact details."
+    ),
+    "medical": (
+        "It also makes it easier for patients to book appointments, view "
+        "your services, and find your location and contact details."
+    ),
+    "generic": (
+        "It also makes it easier for customers to view your services, "
+        "location, contact details, and place inquiries."
+    ),
 }
 
 MESSAGE_TEMPLATE_EN = """Hi, I hope you're doing well.
@@ -64,136 +44,151 @@ If you're interested, just let me know and I'll share the cost of the website.
 
 Thank you, and have a great day!"""
 
-MESSAGE_TEMPLATE_UR = """السلام علیکم، امید ہے آپ خیریت سے ہوں گے۔
-
-میرا نام ابراہیم ہے، میں ایک طالب علم ہوں اور کاروباری اداروں کے لیے پروفیشنل ویب سائٹس بناتا ہوں۔ میں نے گوگل میپس پر {name} دیکھا اور محسوس کیا کہ آپ کے کاروبار کی کوئی ویب سائٹ موجود نہیں ہے۔
-
-ایک پروفیشنل ویب سائٹ آپ کے کاروبار کو زیادہ کسٹمرز، آن لائن آرڈرز، اور نئے گاہکوں کا اعتماد حاصل کرنے میں مدد دے سکتی ہے۔ {value_line}
-
-میں یہ خدمات پیش کرتا ہوں:
-✅ صرف 3 دن میں پروفیشنل ویب سائٹ
-✅ اگر آپ پہلے دیکھنا چاہیں تو صرف 1 دن میں ڈیمو ویب سائٹ
-✅ مفت SEO تاکہ آپ کا کاروبار گوگل پر بہتر نظر آئے
-✅ لائف ٹائم ڈیل (کوئی بار بار چارجز نہیں)
-✅ میں اپنے پچھلے کام کے نمونے بھی دکھا سکتا ہوں
-
-اگر آپ کو دلچسپی ہو تو بتائیں، میں ویب سائٹ کی قیمت بھی بتا دوں گا۔
-
-شکریہ، اور آپ کا دن اچھا گزرے!"""
-
 
 def normalize_phone(raw_phone: str) -> str:
-    """Converts "+92 336 9399938" -> "923369399938" (digits only)."""
     return re.sub(r"\D", "", raw_phone)
+
+
+def is_mobile_number(normalized_phone: str) -> bool:
+    return normalized_phone.startswith("923") and len(normalized_phone) == 12
 
 
 def detect_category_group(category: str) -> str:
     if not category:
         return "generic"
-
     category_lower = category.lower()
-
     if any(word in category_lower for word in RESTAURANT_KEYWORDS):
         return "restaurant"
-
     if any(word in category_lower for word in MEDICAL_KEYWORDS):
         return "medical"
-
     return "generic"
 
 
-def build_messages(name: str, category: str) -> tuple[str, str]:
+def build_message(name: str, category: str) -> str:
     category_text = category.lower() if category else "business"
     group = detect_category_group(category)
-    value_en = VALUE_LINES[group]["en"]
-    value_ur = VALUE_LINES[group]["ur"]
-
-    english = MESSAGE_TEMPLATE_EN.format(
-        name=name, category=category_text, value_line=value_en
+    value_line = VALUE_LINES[group]
+    return MESSAGE_TEMPLATE_EN.format(
+        name=name, category=category_text, value_line=value_line
     )
-    urdu = MESSAGE_TEMPLATE_UR.format(name=name, value_line=value_ur)
-
-    return english, urdu
 
 
-def run(limit: int, dry_run: bool):
-    create_tables()
+def get_campaign_leads(limit: int = None):
+    """Fetches uncontacted leads with mobile numbers, split from
+    landlines. Returns (mobile_leads, landline_leads).
+
+    Already excludes businesses previously marked whatsapp_failed
+    (see DatabaseManager.get_uncontacted_leads)."""
     db = DatabaseManager()
-
     leads = db.get_uncontacted_leads()
+    db.close()
+
+    mobile_leads = []
+    landline_leads = []
+
+    for row in leads:
+        phone = row[3]
+        normalized = normalize_phone(phone)
+        if is_mobile_number(normalized):
+            mobile_leads.append(row)
+        else:
+            landline_leads.append(row)
 
     if limit is not None:
-        leads = leads[:limit]
+        mobile_leads = mobile_leads[:limit]
 
-    info(f"Found {len(leads)} uncontacted leads.")
+    return mobile_leads, landline_leads
+
+
+def send_to_leads(page, leads, progress_callback=None):
+    """Sends one English message per lead. Failed sends are
+    marked whatsapp_failed so they don't get retried - they'll
+    show up in the cold-call export instead.
+
+    Returns:
+        (sent_count, failed_count)
+    """
+    db = DatabaseManager()
+    sent = 0
+    failed = 0
+
+    for i, row in enumerate(leads, start=1):
+        business_id, name, category, phone = row[0], row[1], row[2], row[3]
+        normalized = normalize_phone(phone)
+        message = build_message(name, category)
+
+        info(f"[{i}/{len(leads)}] Sending to {name} ({normalized})...")
+
+        ok = send_message(page, normalized, message)
+
+        if ok:
+            db.mark_contacted(business_id)
+            sent += 1
+        else:
+            db.mark_whatsapp_failed(business_id)
+            failed += 1
+
+        if progress_callback:
+            progress_callback(i, len(leads), name, ok)
+
+        if i < len(leads):
+            delay = random.uniform(20, 40)
+            info(f"Waiting {delay:.0f}s before next business...")
+            time.sleep(delay)
+
+    db.close()
+    return sent, failed
+
+
+def run(limit: int, dry_run: bool, account: str = "main"):
+    create_tables()
+
+    mobile_leads, landline_leads = get_campaign_leads(limit)
+
+    if landline_leads:
+        info(
+            f"{len(landline_leads)} leads have landline numbers "
+            f"(no WhatsApp possible) - skipped, not attempted:"
+        )
+        for row in landline_leads:
+            info(f"  - {row[1]} ({row[3]})")
+
+    info(f"Found {len(mobile_leads)} mobile leads to message.")
 
     if dry_run:
         info("DRY RUN - no messages will be sent.\n")
-        for row in leads:
+        for row in mobile_leads:
             business_id, name, category, phone = row[0], row[1], row[2], row[3]
-            english, urdu = build_messages(name, category)
+            message = build_message(name, category)
             print(f"=== {name} | category: {category} | group: {detect_category_group(category)} ===")
-            print("--- ENGLISH ---")
-            print(english)
-            print("\n--- URDU ---")
-            print(urdu)
+            print(message)
             print()
-        db.close()
         return
 
-    browser = WhatsAppBrowser()
+    info(f"Using WhatsApp account/session: {account!r}")
+    browser = WhatsAppBrowser(account=account)
 
     try:
         page = browser.start()
         input("Press ENTER once WhatsApp Web has loaded...")
 
-        sent = 0
-        failed = 0
-
-        for i, row in enumerate(leads, start=1):
-            business_id, name, category, phone = row[0], row[1], row[2], row[3]
-            normalized = normalize_phone(phone)
-            english, urdu = build_messages(name, category)
-
-            info(f"[{i}/{len(leads)}] Sending to {name} ({normalized})...")
-
-            ok_en = send_message(page, normalized, english)
-            time.sleep(random.uniform(5, 10))
-            ok_ur = send_message(page, normalized, urdu)
-
-            if ok_en or ok_ur:
-                db.mark_contacted(business_id)
-                sent += 1
-            else:
-                failed += 1
-
-            if i < len(leads):
-                delay = random.uniform(15, 30)
-                info(f"Waiting {delay:.0f}s before next business...")
-                time.sleep(delay)
-
+        sent, failed = send_to_leads(page, mobile_leads)
         success(f"Campaign complete: {sent} contacted, {failed} failed.")
 
     finally:
         browser.close()
-        db.close()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Send WhatsApp outreach (EN + UR) to leads without a website."
+        description="Send WhatsApp outreach (English only) to leads without a website."
     )
-    parser.add_argument(
-        "--limit", type=int, default=None,
-        help="Only message the first N leads."
-    )
-    parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Preview messages without sending anything."
-    )
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--account", type=str, default="main")
 
     args = parser.parse_args()
-    run(limit=args.limit, dry_run=args.dry_run)
+    run(limit=args.limit, dry_run=args.dry_run, account=args.account)
 
 
 if __name__ == "__main__":
